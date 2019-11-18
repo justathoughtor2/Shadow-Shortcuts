@@ -11,7 +11,8 @@ class Database(commands.Cog):
         bot.database = self
         bot.dblogger = bot.logging_root.getLogger("database")
         loop = asyncio.get_event_loop()
-        bot.dbpool = loop.run_until_complete(asyncpg.create_pool(dsn=self.bot.config.SQLDSN, min_size=5, max_size=50, password=self.bot.config.SQLPASS))
+        bot.dbpool = loop.run_until_complete(asyncpg.create_pool(dsn=self.bot.config.SQLDSN, min_size=5, max_size=50,
+                                                                 password=self.bot.config.SQLPASS))
         self.logger = bot.dblogger
         bot.logger.info("Initialized Database cog")
 
@@ -62,187 +63,12 @@ class Database(commands.Cog):
                 role_list.append(role.id)
         for item in role_list:
             role_str += f"{item},"
-        SQL = f"INSERT INTO role_tracking(discord_id, roles) VALUES('{member.id}', '{role_str}') ON CONFLICT (discord_id) DO UPDATE SET roles='{role_str}';"
+        SQL = f"INSERT INTO role_tracking(discord_id, roles) VALUES('{member.id}', '{role_str}') " \
+              f"ON CONFLICT (discord_id) DO UPDATE SET roles='{role_str}';"
         async with self.bot.dbpool.acquire() as connection:
             await connection.execute(SQL)
 
-    async def find_database_record(self, hash):
-        if hash is None:
-            return None
-        sql = f"SELECT app_id, title, players, time_played from game_tracking WHERE app_id='{hash}' LIMIT 1;"
-        async with self.bot.dbpool.acquire() as connection:
-            res = await connection.fetch(sql)
-        if len(res) != 0:
-            res = res.pop()
-        else:
-            return None
-        res = dict(res)
-        return res
 
-    async def create_database_record(self, dataset):
-        import json
-        if dataset['id'] is None:
-            return
-        elif dataset['id'] == 0:
-            return
-        title = dataset['title']
-        title = json.dumps(title)
-        sql = f"INSERT INTO game_tracking (app_id, title, players) VALUES ($1, $2, $3);"
-        async with self.bot.dbpool.acquire() as connection:
-            await connection.execute(sql, dataset['id'], title, json.dumps(dataset['players']))
-
-    async def update_database_record(self, dataset):
-        import datetime
-        if dataset['time_played'] is None:
-            dataset['time_played'] = datetime.timedelta()
-        sql = f"UPDATE game_tracking SET players='{dataset['players']}', time_played='{dataset['time_played']}' WHERE app_id='{dataset['id']}';"
-        async with self.bot.dbpool.acquire() as connection:
-            await connection.execute(sql)
-
-    async def process_member_update(self, before: discord.Member, after: discord.Member):
-        prior = None
-        current = None
-        import inspect
-        if after.guild.id != 460948857304383488:
-            return
-        if before.activity != after.activity:
-            prior = before.activity
-            current = after.activity
-            if before.activity is None:
-                prior = None
-                current = after.activity
-                if hasattr(prior, 'application_id'):
-                    papp_id = prior.application_id
-                else:
-                    papp_id = None
-                if hasattr(current, 'application_id'):
-                    capp_id = current.application_id
-                else:
-                    capp_id = None
-                if current.type == "ActivityType.streaming":
-                    self.bot.logger.info(f"DBG: M:{after.id} has started streaming URL: {current.url}")
-                elif current.type == "ActivityType.listening":
-                    self.bot.logger.info(f"DBG: M:{after.id} has started listening to Spotify: S:{current.title} Ar:{current.artist} Al: {current.album} TID:{current.track_id}")
-                else:
-                    rec = await self.find_database_record(capp_id)
-                    if rec is None:
-                        dataset = dict()
-                        dataset['id'] = capp_id
-                        if dataset['id'] is None:
-                            dataset['id'] = 0
-                        dataset['title'] = current.name
-                        dataset['players'] = list()
-                        dataset['players'].append(after.id)
-                        await self.create_database_record(dataset)
-                    else:
-                        import json, datetime
-                        dataset = dict()
-                        dataset['id'] = capp_id
-                        if dataset['id'] is None:
-                            dataset['id'] = 0
-                        dataset['title'] = current.name
-                        dataset['players'] = json.loads(rec['players'])
-                        dataset['time_played'] = rec['time_played']
-                        if after.id not in dataset['players']:
-                            dataset['players'].append(after.id)
-                        dataset['players'] = json.dumps(dataset['players'])
-                        await self.update_database_record(dataset)
-            elif after.activity is None:
-                current = None
-                prior = before.activity
-                if prior.type == "ActivityType.streaming":
-                    self.bot.logger.info(f"DBG: M:{after.id} has stopped streaming.")
-                elif prior.type == "ActivityType.listening":
-                    self.bot.logger.info(f"DBG: M:{after.id} has stopped listening to Spotify.")
-                else:
-                    if hasattr(prior, 'application_id'):
-                        app_id = prior.application_id
-                    else:
-                        app_id = 0
-                    rec = await self.find_database_record(app_id)
-                    if rec is None:
-                        pass
-                    else:
-                        import datetime, json
-                        now = datetime.datetime.now()
-                        starttime = prior.start
-                        if starttime is None:
-                            playtime = rec['time_played']
-                        else:
-                            delta = now - starttime
-                            playtime = rec['time_played']
-                            if playtime is None:
-                                playtime = delta
-                                self.bot.logger.info(f"DBG: None Playtime {playtime} D:{delta}")
-                                rec['time_played'] = playtime
-                            elif isinstance(playtime, datetime.time):
-                                playtime = datetime.timedelta(hours=playtime.hour, minutes=playtime.minute, seconds=playtime.second, microseconds=playtime.microsecond)
-                                playtime += delta
-                                self.bot.logger.info(f"DBG: is datetime.time Playtime {playtime} D:{delta}")
-                            else:
-                                playtime += delta
-                        dataset = dict()
-                        dataset['id'] = app_id
-                        if dataset['id'] is None:
-                            dataset['id'] = 0
-                        dataset['title'] = prior.name
-                        dataset['players'] = json.loads(rec['players'])
-                        dataset['time_played'] = playtime
-                        if after.id not in dataset['players']:
-                            dataset['players'].append(after.id)
-                        dataset['players'] = json.dumps(dataset['players'])
-                        await self.update_database_record(dataset)
-            elif before.name == after.name:
-                if hasattr(prior, 'application_id'):
-                    papp_id = prior.application_id
-                else:
-                    papp_id = 0
-                if hasattr(current, 'application_id'):
-                    capp_id = current.application_id
-                else:
-                    capp_id = 0
-                if current.type == "ActivityType.listening":
-                    self.bot.logger.info(f"DBG SSW: M:{after.id} Spotify Song change: S:{current.title} Ar:{current.artist} Al: {current.album} TID:{current.track_id}")
-                elif current.type == "ActivityType.streaming":
-                    self.bot.logger.info(f"DBG StrIG: M:{after.id} U:{current.url}")
-                else:
-                    pass
-            else:
-                if hasattr(prior, 'application_id'):
-                    papp_id = prior.application_id
-                else:
-                    papp_id = 0
-                if hasattr(current, 'application_id'):
-                    capp_id = current.application_id
-                else:
-                    capp_id = 0
-                if prior.type is "ActivityType.listening":
-                    self.bot.logger.info(f"DBG S2G: M:{after.id} G: {current.name} AH: {current.application_id}")
-                else:
-                    rec = await self.find_database_record(capp_id)
-                    if rec is None:
-                        dataset = dict()
-                        dataset['id'] = capp_id
-                        if dataset['id'] is None:
-                            dataset['id'] = 0
-                        dataset['title'] = current.name
-                        dataset['players'] = list()
-                        dataset['players'].append(after.id)
-                        await self.create_database_record(dataset)
-                    else:
-                        import json, datetime
-                        dataset = dict()
-                        dataset['id'] = capp_id
-                        if dataset['id'] is None:
-                            dataset['id'] = 0
-                        dataset['title'] = current.name
-                        dataset['players'] = json.loads(rec['players'])
-                        dataset['time_played'] = rec['time_played']
-                        if after.id not in dataset['players']:
-                            dataset['players'].append(after.id)
-                        dataset['players'] = json.dumps(dataset['players'])
-                        await self.update_database_record(dataset)
-                    self.bot.logger.info(f"DBG G2G Swap M: {after.id} P:{prior.name} A:{current.name} PH:{papp_id} AH: {capp_id}")
 
     async def re_apply_roles(self, member):
         roles = list()
