@@ -68,8 +68,6 @@ class Database(commands.Cog):
         async with self.bot.dbpool.acquire() as connection:
             await connection.execute(SQL)
 
-
-
     async def re_apply_roles(self, member):
         roles = list()
         applied_roles = list()
@@ -99,6 +97,20 @@ class Database(commands.Cog):
                         applied_roles.append(role)
                         await member.add_roles(role, reason="Re-Applying leaver's roles.")
         self.bot.logger.info(f"Leaver roles applied, for ({member.id}){member.name} Roles-applied: {applied_roles}")
+
+    async def get_language(self, ctx):
+        if isinstance(ctx.message.channel, discord.DMChannel):
+            return ctx.user.locale  # If we are in a DM Attempt to respond in users locale.
+        else:
+            return ctx.guild.preferred_locale  # If not in DM return guild Locale
+
+    async def get_configuration(self, ctx):
+        config = dict()
+        if isinstance(ctx.message.channel, discord.DMChannel):
+            config['guild'] = None # DMS exist outside of guilds
+        else:
+            config['guild'] = ctx.guild.id  # guild ID Number
+        config['lang'] = self.bot.database.get_language(ctx)  # Preferred Language for this context
 
 
 def setup(bot):
